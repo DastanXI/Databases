@@ -1,0 +1,729 @@
+
+
+
+CREATE TABLE accounts (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    balance DECIMAL(10, 2) DEFAULT 0.00
+);
+
+
+CREATE TABLE products (
+    id SERIAL PRIMARY KEY,
+    shop VARCHAR(100) NOT NULL,
+    product VARCHAR(100) NOT NULL,
+    price DECIMAL(10, 2) NOT NULL
+);
+
+
+INSERT INTO accounts (name, balance) VALUES
+('Alice', 1000.00),
+('Bob', 500.00),
+('Wally', 750.00);
+
+INSERT INTO products (shop, product, price) VALUES
+('Joe''s Shop', 'Coke', 2.50),
+('Joe''s Shop', 'Pepsi', 3.00);
+
+
+SELECT * FROM accounts;
+SELECT * FROM products;
+
+
+-- Transfer $100 from Alice to Bob
+BEGIN;
+
+UPDATE accounts SET balance = balance - 100.00
+WHERE name = 'Alice';
+
+UPDATE accounts SET balance = balance + 100.00
+WHERE name = 'Bob';
+
+COMMIT;
+
+-- Check results
+SELECT * FROM accounts WHERE name IN ('Alice', 'Bob');
+
+/* ANSWERS:
+a) Alice's : $900.00, Bob's : $600.00
+
+b) It's important to group these UPDATE statements in a single transaction because:
+    Both updates succeed or both fail together
+    Money won't disappear or duplicate
+    Total balance remains constant
+    If one UPDATE fails, the other is automatically rolled back
+
+c) Without a transaction, if the system crashed between the two UPDATEs:
+   - Alice would lose $100 (first UPDATE committed)
+   - Bob would NOT receive the $100 (second UPDATE never executed)
+   - Money would "disappear" from the system
+   - Database would be in an inconsistent state
+   - No way to automatically recover or rollback the partial change
+*/
+
+
+-- Attempt to deduct wrong amount, then rollback
+BEGIN;
+
+UPDATE accounts SET balance = balance - 500.00
+WHERE name = 'Alice';
+
+-- Check Alice's balance after UPDATE
+SELECT * FROM accounts WHERE name = 'Alice';
+-- Shows: balance = 400.00
+
+-- Oops! Wrong amount, let's undo
+ROLLBACK;
+
+-- Check Alice's balance after ROLLBACK
+SELECT * FROM accounts WHERE name = 'Alice';
+-- Shows: balance = 900.00 (back to original)
+
+/* ANSWERS:
+a) Alice's balance after UPDATE but before ROLLBACK: $400.00
+
+b) Alice's balance after ROLLBACK: $900.00 (restored to pre-transaction state)
+
+c) Real-world situations to use ROLLBACK:
+   - Error detection
+   - Account balance too low for withdrawal
+   - User cancellation
+   - Business rule violations
+   - Unexpected errors during transaction processing
+   - Data doesn't meet business requirements
+   - Deadlock detection: Transaction conflicts with another transaction
+*/
+
+BEGIN;
+
+UPDATE accounts SET balance = balance - 100.00
+WHERE name = 'Alice';
+
+-- Create a savepoint before
+SAVEPOINT my_savepoint;
+
+-- Credit Bob (but we'll undo this)
+UPDATE accounts SET balance = balance + 100.00
+WHERE name = 'Bob';
+
+-- should transfer to Wally instead
+ROLLBACK TO my_savepoint;
+
+-- Now credit Wally
+UPDATE accounts SET balance = balance + 100.00
+WHERE name = 'Wally';
+
+COMMIT;
+
+-- Check final balances
+SELECT * FROM accounts;
+
+/* ANSWERS:
+a) Final balances after COMMIT:
+   - Alice: $800.00)
+   - Bob: $600.00 (unchanged)
+   - Wally: $850.00
+
+b) Bob's account was temporarily credited with $100, but this change was
+   rolled back to the savepoint. In the final committed state, Bob's balance
+   is unchanged because the UPDATE to Bob's account occurred AFTER the savepoint,
+   so it was undone by ROLLBACK TO my_savepoint.
+
+c) Advantages of SAVEPOINT over starting a new transaction:
+   - Partial rollback: Can undo recent operations while keeping earlier work
+   - No need to re-execute: Don't have to repeat all previous operations
+   - Performance: Faster than rolling back entire transaction and starting over
+   - Flexibility: Can have multiple savepoints for complex operations
+   - Nested error handling: Different error recovery strategies within one transaction
+   - Maintains transaction context: Locks and isolation level preserved
+*/
+
+-- SCENARIO A: READ COMMITTED
+-- ---------------------------------------------------------------------
+-- Terminal 1:
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+-- First read
+SELECT * FROM products WHERE shop = 'Joe''s Shop';
+-- Shows: Coke ($2.50), Pepsi ($3.00)
+
+-- (Wait for Terminal 2 to make changes and COMMIT)
+-- Then re-run the same query:
+SELECT * FROM products WHERE shop = 'Joe''s Shop';
+-- Now shows: Fanta ($3.50) - DIFFERENT DATA!
+
+COMMIT;
+
+-- Terminal 2 (execute while Terminal 1 is waiting):
+BEGIN;
+
+DELETE FROM products WHERE shop = 'Joe''s Shop';
+INSERT INTO products (shop, product, price)
+VALUES ('Joe''s Shop', 'Fanta', 3.50);
+
+COMMIT;
+
+-- SCENARIO B: SERIALIZABLE
+-- ---------------------------------------------------------------------
+-- First, reset the data
+DELETE FROM products WHERE shop = 'Joe''s Shop';
+INSERT INTO products (shop, product, price) VALUES
+('Joe''s Shop', 'Coke', 2.50),
+('Joe''s Shop', 'Pepsi', 3.00);
+
+-- Terminal 1:
+BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+
+-- First read
+SELECT * FROM products WHERE shop = 'Joe''s Shop';
+-- Shows: Coke ($2.50), Pepsi ($3.00)
+
+-- (Wait for Terminal 2 to make changes and COMMIT)
+-- Then re-run:
+SELECT * FROM products WHERE shop = 'Joe''s Shop';
+-- Still shows: Coke ($2.50), Pepsi ($3.00) - SAME DATA!
+
+COMMIT;
+
+-- Terminal 2 (execute while Terminal 1 is waiting):
+BEGIN;
+
+DELETE FROM products WHERE shop = 'Joe''s Shop';
+INSERT INTO products (shop, product, price)
+VALUES ('Joe''s Shop', 'Fanta', 3.50);
+
+COMMIT;
+
+/* ANSWERS:
+a) Scenario A (READ COMMITTED):
+   - Before Terminal 2 commits: Sees Coke ($2.50) and Pepsi ($3.00)
+   - After Terminal 2 commits: Sees only Fanta ($3.50)
+   - This is a NON-REPEATABLE READ - same query returns different results
+
+b) Scenario B (SERIALIZABLE):
+   - Terminal 1 sees Coke and Pepsi BOTH TIMES
+   - Even after Terminal 2 commits, Terminal 1 maintains its snapshot
+   - Data remains consistent throughout the transaction
+
+c) Difference between READ COMMITTED and SERIALIZABLE:
+   - READ COMMITTED: Each SELECT sees the most recent committed data
+     * Allows non-repeatable reads
+     * Better concurrency and performance
+     * Suitable for most applications
+
+   - SERIALIZABLE: Transaction works with a consistent snapshot
+     * Prevents all anomalies (dirty, non-repeatable, phantom reads)
+     * Transactions appear to execute in serial order
+     * Slower due to stricter locking
+     * Used when complete consistency is critical
+*/
+
+-- =====================================================================
+-- TASK 5: Phantom Read Demonstration
+-- =====================================================================
+
+-- Reset data first
+DELETE FROM products WHERE shop = 'Joe''s Shop';
+INSERT INTO products (shop, product, price) VALUES
+('Joe''s Shop', 'Coke', 2.50),
+('Joe''s Shop', 'Pepsi', 3.00);
+
+-- Terminal 1:
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+-- First query
+SELECT MAX(price), MIN(price) FROM products
+WHERE shop = 'Joe''s Shop';
+-- Shows: MAX = 3.00, MIN = 2.50
+
+-- (Wait for Terminal 2 to INSERT and COMMIT)
+
+-- Second query (same as first)
+SELECT MAX(price), MIN(price) FROM products
+WHERE shop = 'Joe''s Shop';
+-- In PostgreSQL REPEATABLE READ: Still shows MAX = 3.00, MIN = 2.50
+-- (Phantom reads are PREVENTED in PostgreSQL's REPEATABLE READ)
+
+COMMIT;
+
+-- Terminal 2:
+BEGIN;
+
+INSERT INTO products (shop, product, price)
+VALUES ('Joe''s Shop', 'Sprite', 4.00);
+
+COMMIT;
+
+/* ANSWERS:
+a) In PostgreSQL with REPEATABLE READ: Terminal 1 does NOT see the new Sprite product.
+   PostgreSQL's REPEATABLE READ implementation prevents phantom reads.
+
+   Note: In some other databases (following SQL standard strictly), REPEATABLE READ
+   might allow phantom reads, showing MAX = 4.00 after Terminal 2 commits.
+
+b) A phantom read occurs when:
+   - A transaction executes a query that returns a set of rows
+   - Another transaction INSERTs new rows matching the query condition
+   - The first transaction re-executes the same query
+   - New rows "appear" (phantoms) that weren't there before
+   - Example: counting inventory, then count changes due to new inserts
+
+c) SERIALIZABLE isolation level prevents phantom reads.
+   In PostgreSQL, REPEATABLE READ also prevents phantom reads (stricter than SQL standard).
+*/
+
+-- =====================================================================
+-- TASK 6: Dirty Read Demonstration
+-- =====================================================================
+
+-- Note: PostgreSQL does NOT support READ UNCOMMITTED in practice.
+-- It treats READ UNCOMMITTED as READ COMMITTED.
+-- This demonstration shows the concept, but won't work in PostgreSQL.
+
+-- Terminal 1:
+BEGIN TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+-- First read
+SELECT * FROM products WHERE shop = 'Joe''s Shop';
+-- Shows current data
+
+-- (Wait for Terminal 2 to UPDATE but NOT commit)
+
+-- Second read
+SELECT * FROM products WHERE shop = 'Joe''s Shop';
+-- In a true READ UNCOMMITTED: Would show price = 99.99
+-- In PostgreSQL: Still shows committed data (acts as READ COMMITTED)
+
+-- (Wait for Terminal 2 to ROLLBACK)
+
+-- Third read
+SELECT * FROM products WHERE shop = 'Joe''s Shop';
+-- Shows original prices
+
+COMMIT;
+
+-- Terminal 2:
+BEGIN;
+
+UPDATE products SET price = 99.99
+WHERE product = 'Fanta';
+
+-- (Wait here - don't commit yet)
+-- Let Terminal 1 read the data
+
+-- Then rollback
+ROLLBACK;
+
+/* ANSWERS:
+a) In a true READ UNCOMMITTED implementation:
+   - YES, Terminal 1 would see 99.99
+   - This is PROBLEMATIC because:
+     * The data was never committed
+     * Terminal 2 rolled back the change
+     * Terminal 1 made decisions based on invalid data
+     * Could cause cascading errors in business logic
+     * Data integrity is compromised
+
+b) A dirty read occurs when:
+   - One transaction reads data modified by another transaction
+   - The modifying transaction has NOT yet committed
+   - The data might be rolled back (making it "dirty" or invalid)
+   - The reading transaction bases decisions on potentially invalid data
+
+c) Why avoid READ UNCOMMITTED:
+   - Violates data integrity principles
+   - Reads data that may never exist (rolled back)
+   - Causes incorrect business decisions
+   - Can propagate errors throughout system
+   - Breaks ACID properties (specifically Isolation)
+   - Risk of cascading failures
+   - Difficult to debug issues
+   - Only acceptable in very specific scenarios (like approximate counts)
+*/
+
+-- =====================================================================
+-- INDEPENDENT EXERCISE 1: Conditional Transfer with Error Handling
+-- =====================================================================
+
+-- Solution using PL/pgSQL block
+BEGIN;
+
+DO $$
+DECLARE
+    bob_balance DECIMAL(10,2);
+    transfer_amount DECIMAL(10,2) := 200.00;
+BEGIN
+    -- Get Bob's current balance
+    SELECT balance INTO bob_balance
+    FROM accounts
+    WHERE name = 'Bob';
+
+    -- Check if sufficient funds
+    IF bob_balance >= transfer_amount THEN
+        -- Perform transfer
+        UPDATE accounts
+        SET balance = balance - transfer_amount
+        WHERE name = 'Bob';
+
+        UPDATE accounts
+        SET balance = balance + transfer_amount
+        WHERE name = 'Wally';
+
+        RAISE NOTICE 'Transfer successful: $ % transferred from Bob to Wally', transfer_amount;
+        RAISE NOTICE 'Bob new balance: $ %', bob_balance - transfer_amount;
+    ELSE
+        -- Insufficient funds
+        RAISE EXCEPTION 'Insufficient funds. Bob has $ % but needs $ %',
+            bob_balance, transfer_amount;
+    END IF;
+END $$;
+
+COMMIT;
+
+-- Alternative solution using conditional UPDATE
+BEGIN;
+
+-- This will update only if balance is sufficient
+UPDATE accounts
+SET balance = balance - 200.00
+WHERE name = 'Bob' AND balance >= 200.00;
+
+-- Check if update succeeded
+DO $$
+DECLARE
+    rows_updated INTEGER;
+BEGIN
+    GET DIAGNOSTICS rows_updated = ROW_COUNT;
+
+    IF rows_updated = 0 THEN
+        RAISE EXCEPTION 'Transfer failed: Bob has insufficient funds';
+    END IF;
+
+    -- If we get here, first update succeeded
+    UPDATE accounts
+    SET balance = balance + 200.00
+    WHERE name = 'Wally';
+
+    RAISE NOTICE 'Transfer completed successfully';
+END $$;
+
+COMMIT;
+
+-- =====================================================================
+-- INDEPENDENT EXERCISE 2: Multiple Savepoints
+-- =====================================================================
+
+BEGIN;
+
+-- Step 1: Insert new product
+INSERT INTO products (shop, product, price)
+VALUES ('Joe''s Shop', 'Mountain Dew', 3.25);
+
+SELECT * FROM products WHERE product = 'Mountain Dew';
+-- Shows: Mountain Dew with price $3.25
+
+-- Step 2: Create first savepoint
+SAVEPOINT first_save;
+
+-- Step 3: Update the price
+UPDATE products
+SET price = 3.50
+WHERE product = 'Mountain Dew';
+
+SELECT * FROM products WHERE product = 'Mountain Dew';
+-- Shows: Mountain Dew with price $3.50
+
+-- Step 4: Create second savepoint
+SAVEPOINT second_save;
+
+-- Step 5: Delete the product
+DELETE FROM products
+WHERE product = 'Mountain Dew';
+
+SELECT * FROM products WHERE product = 'Mountain Dew';
+-- Shows: No rows (product deleted)
+
+-- Step 6: Rollback to first savepoint
+ROLLBACK TO first_save;
+
+SELECT * FROM products WHERE product = 'Mountain Dew';
+-- Shows: Mountain Dew with price $3.25 (back to state at first_save)
+
+-- Step 7: Commit
+COMMIT;
+
+-- Final verification
+SELECT * FROM products WHERE product = 'Mountain Dew';
+
+/* DOCUMENTATION:
+Final state of products table:
+- Mountain Dew EXISTS in the table
+- Price: $3.25 (original insert price)
+- The price update to $3.50 was UNDONE by rollback
+- The deletion was UNDONE by rollback
+
+Timeline of operations:
+1. INSERT Mountain Dew at $3.25 ✓ (committed)
+2. SAVEPOINT first_save
+3. UPDATE price to $3.50 ✗ (rolled back)
+4. SAVEPOINT second_save
+5. DELETE product ✗ (rolled back)
+6. ROLLBACK TO first_save (undoes steps 3-5)
+7. COMMIT (finalizes step 1)
+
+Key insight: Rolling back to first_save undid everything after that savepoint,
+including the second savepoint, price update, and deletion.
+*/
+
+-- =====================================================================
+-- INDEPENDENT EXERCISE 3: Concurrent Withdrawal Scenario
+-- =====================================================================
+
+-- Setup: Ensure Alice has sufficient balance
+UPDATE accounts SET balance = 1000.00 WHERE name = 'Alice';
+
+-- SCENARIO 1: READ COMMITTED (Dangerous!)
+-- ---------------------------------------------------------------------
+-- Terminal 1:
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+-- Check balance
+SELECT balance FROM accounts WHERE name = 'Alice';
+-- Shows: $1000.00
+
+-- Simulate processing time
+SELECT pg_sleep(3);
+
+-- Attempt withdrawal
+UPDATE accounts
+SET balance = balance - 600.00
+WHERE name = 'Alice' AND balance >= 600.00;
+
+-- Check result
+SELECT balance FROM accounts WHERE name = 'Alice';
+
+COMMIT;
+
+-- Terminal 2 (run simultaneously):
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+-- Check balance
+SELECT balance FROM accounts WHERE name = 'Alice';
+-- Shows: $1000.00
+
+-- Attempt withdrawal
+UPDATE accounts
+SET balance = balance - 600.00
+WHERE name = 'Alice' AND balance >= 600.00;
+
+-- Check result
+SELECT balance FROM accounts WHERE name = 'Alice';
+-- PROBLEM: If both transactions check balance before either updates,
+-- both might succeed, resulting in negative balance!
+
+COMMIT;
+
+/* RESULT with READ COMMITTED:
+- Both transactions might succeed
+- Alice's balance could become -$200.00 (1000 - 600 - 600)
+- This is an OVERDRAFT - critical error!
+*/
+
+-- Reset for next scenario
+UPDATE accounts SET balance = 1000.00 WHERE name = 'Alice';
+
+-- SCENARIO 2: REPEATABLE READ (Better, but still issues)
+-- ---------------------------------------------------------------------
+-- Terminal 1:
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+SELECT balance FROM accounts WHERE name = 'Alice';
+UPDATE accounts
+SET balance = balance - 600.00
+WHERE name = 'Alice' AND balance >= 600.00;
+
+COMMIT;
+
+-- Terminal 2:
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+SELECT balance FROM accounts WHERE name = 'Alice';
+UPDATE accounts
+SET balance = balance - 600.00
+WHERE name = 'Alice' AND balance >= 600.00;
+
+-- May get serialization error if Terminal 1 commits first
+COMMIT;
+
+/* RESULT with REPEATABLE READ:
+- PostgreSQL may abort one transaction with serialization error
+- Safer than READ COMMITTED
+- Application must handle serialization failures
+*/
+
+-- Reset for next scenario
+UPDATE accounts SET balance = 1000.00 WHERE name = 'Alice';
+
+-- SCENARIO 3: SERIALIZABLE (Safest)
+-- ---------------------------------------------------------------------
+-- Terminal 1:
+BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+
+SELECT balance FROM accounts WHERE name = 'Alice';
+-- Shows: $1000.00
+
+UPDATE accounts
+SET balance = balance - 600.00
+WHERE name = 'Alice' AND balance >= 600.00;
+
+SELECT balance FROM accounts WHERE name = 'Alice';
+-- Shows: $400.00
+
+COMMIT;
+
+-- Terminal 2:
+BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+
+SELECT balance FROM accounts WHERE name = 'Alice';
+-- Shows: $1000.00 (snapshot at transaction start)
+
+UPDATE accounts
+SET balance = balance - 600.00
+WHERE name = 'Alice' AND balance >= 600.00;
+
+-- ERROR: could not serialize access due to concurrent update
+COMMIT; -- This will fail
+
+/* RESULT with SERIALIZABLE:
+- One transaction succeeds
+- Other transaction gets serialization error and must retry
+- Database integrity maintained
+- No overdraft possible
+- Application must implement retry logic
+
+CONCLUSION:
+- READ COMMITTED: Fast but dangerous for this scenario
+- REPEATABLE READ: Better protection, some serialization errors
+- SERIALIZABLE: Complete protection, more serialization errors
+- For banking: Use SERIALIZABLE or explicit locking (SELECT FOR UPDATE)
+*/
+
+-- BONUS: Best practice solution using SELECT FOR UPDATE
+BEGIN;
+
+-- Lock the row for update
+SELECT balance FROM accounts
+WHERE name = 'Alice'
+FOR UPDATE;
+
+-- Now perform withdrawal
+UPDATE accounts
+SET balance = balance - 600.00
+WHERE name = 'Alice' AND balance >= 600.00;
+
+COMMIT;
+
+-- =====================================================================
+-- INDEPENDENT EXERCISE 4: Sally and Joe's MAX < MIN Problem
+-- =====================================================================
+
+-- Setup the Sells table
+CREATE TABLE IF NOT EXISTS sells (
+    shop VARCHAR(100),
+    product VARCHAR(100),
+    price DECIMAL(10, 2),
+    PRIMARY KEY (shop, product)
+);
+
+INSERT INTO sells (shop, product, price) VALUES
+('Joe''s Shop', 'Coke', 2.50),
+('Joe''s Shop', 'Pepsi', 3.00),
+('Joe''s Shop', 'Fanta', 2.75);
+
+-- PROBLEM DEMONSTRATION: Without Transactions
+-- ---------------------------------------------------------------------
+
+-- Sally's Session (checking price range):
+-- Query 1: Find maximum price
+SELECT MAX(price) FROM sells WHERE shop = 'Joe''s Shop';
+-- Result: 3.00
+
+-- (Joe makes changes here - see below)
+
+-- Query 2: Find minimum price
+SELECT MIN(price) FROM sells WHERE shop = 'Joe''s Shop';
+-- Result: 3.50
+
+-- PROBLEM: MAX (3.00) < MIN (3.50) - This is impossible!
+
+-- Joe's Session (between Sally's queries):
+BEGIN;
+-- Joe updates all prices
+UPDATE sells SET price = price + 1.00 WHERE shop = 'Joe''s Shop';
+COMMIT;
+
+/* EXPLANATION OF THE PROBLEM:
+- Sally reads MAX price: 3.00
+- Joe updates ALL prices by +$1.00
+- Joe commits changes
+- Sally reads MIN price: 3.50
+- Sally sees MAX < MIN which violates basic logic
+- This creates inconsistent view of the database
+*/
+
+-- Reset data
+DELETE FROM sells;
+INSERT INTO sells (shop, product, price) VALUES
+('Joe''s Shop', 'Coke', 2.50),
+('Joe''s Shop', 'Pepsi', 3.00),
+('Joe''s Shop', 'Fanta', 2.75);
+
+-- SOLUTION: Using Transactions
+-- ---------------------------------------------------------------------
+
+-- Sally's Session (WITH transaction):
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+-- Query 1: Find maximum price
+SELECT MAX(price) FROM sells WHERE shop = 'Joe''s Shop';
+-- Result: 3.00
+
+-- Joe makes changes (but Sally won't see them)
+
+-- Query 2: Find minimum price
+SELECT MIN(price) FROM sells WHERE shop = 'Joe''s Shop';
+-- Result: 2.50
+
+-- Now: MAX (3.00) > MIN (2.50) - Logically consistent!
+
+COMMIT;
+
+-- Joe's Session (runs during Sally's transaction):
+BEGIN;
+UPDATE sells SET price = price + 1.00 WHERE shop = 'Joe''s Shop';
+COMMIT;
+
+/* SOLUTION EXPLANATION:
+- Sally uses REPEATABLE READ isolation level
+- Sally's transaction creates a consistent snapshot
+- All queries in Sally's transaction see the same data
+- Joe's changes are not visible to Sally until she commits
+- Sally sees MAX = 3.00, MIN = 2.50 (consistent view)
+- After Sally commits, she can start new transaction to see Joe's changes
+
+KEY TAKEAWAYS:
+1. Without transactions: Read inconsistencies occur
+2. With REPEATABLE READ: Consistent snapshot maintained
+3. Transactions ensure logical consistency of query results
+4. Critical for reports, analytics, and business logic
+*/
+
+-- Alternative demonstration with SERIALIZABLE
+BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+
+SELECT MAX(price) AS max_price, MIN(price) AS min_price
+FROM sells
+WHERE shop = 'Joe''s Shop';
+-- Shows consistent results regardless of concurrent updates
+
+COMMIT;
