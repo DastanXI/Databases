@@ -1,0 +1,565 @@
+CREATE TABLE customers (
+    customer_id SERIAL PRIMARY KEY,
+    iin CHAR(12) UNIQUE NOT NULL CHECK (iin ~ '^\d{12}$'),
+    full_name VARCHAR(200) NOT NULL,
+    phone VARCHAR(20) NOT NULL,
+    email VARCHAR(100) NOT NULL,
+    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'blocked', 'frozen')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    daily_limit_kzt NUMERIC(15,2) DEFAULT 10000000.00
+);
+
+CREATE TABLE accounts (
+    account_id SERIAL PRIMARY KEY,
+    customer_id INTEGER REFERENCES customers(customer_id),
+    account_number VARCHAR(34) UNIQUE NOT NULL CHECK (account_number ~ '^KZ\d{2}[A-Z0-9]{16}$'),
+    currency VARCHAR(3) CHECK (currency IN ('KZT', 'USD', 'EUR', 'RUB')),
+    balance NUMERIC(15,2) DEFAULT 0.00 CHECK (balance >= 0),
+    is_active BOOLEAN DEFAULT true,
+    opened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    closed_at TIMESTAMP
+);
+
+CREATE TABLE exchange_rates (
+    rate_id SERIAL PRIMARY KEY,
+    from_currency VARCHAR(3) NOT NULL,
+    to_currency VARCHAR(3) NOT NULL,
+    rate NUMERIC(10,6) NOT NULL CHECK (rate > 0),
+    valid_from TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    valid_to TIMESTAMP DEFAULT '2099-12-31',
+    UNIQUE(from_currency, to_currency, valid_from)
+);
+
+CREATE TABLE transactions (
+    transaction_id SERIAL PRIMARY KEY,
+    from_account_id INTEGER REFERENCES accounts(account_id),
+    to_account_id INTEGER REFERENCES accounts(account_id),
+    amount NUMERIC(15,2) NOT NULL CHECK (amount > 0),
+    currency VARCHAR(3) NOT NULL,
+    exchange_rate NUMERIC(10,6),
+    amount_kzt NUMERIC(15,2),
+    type VARCHAR(20) CHECK (type IN ('transfer', 'deposit', 'withdrawal')),
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'failed', 'reversed')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP,
+    description TEXT
+);
+
+CREATE TABLE audit_log (
+    log_id SERIAL PRIMARY KEY,
+    table_name VARCHAR(50) NOT NULL,
+    record_id INTEGER NOT NULL,
+    action VARCHAR(10) CHECK (action IN ('INSERT', 'UPDATE', 'DELETE')),
+    old_values JSONB,
+    new_values JSONB,
+    changed_by VARCHAR(100) DEFAULT CURRENT_USER,
+    changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ip_address INET
+);
+
+INSERT INTO customers (iin, full_name, phone, email, status, daily_limit_kzt) VALUES
+('123456789012', 'Дильназ Мусина', '+77011234567', 'musinadilnaz@mail.kz', 'active', 15000000.00),
+('234567890123', 'Ержанат Касымулы', '+77012345678', 'yerzhanatkasm@mail.kz', 'active', 20000000.00),
+('345678901234', 'Диас Аскарбек', '+77013456789', 'askarbekdias@mail.kz', 'active', 10000000.00),
+('456789012345', 'Асхат Сейтенов', '+77014567890', 'askhatseiten@mail.kz', 'blocked', 5000000.00),
+('567890123456', 'Байтурсынов Берик', '+77015678901', 'berikbaitursyn@mail.kz', 'active', 25000000.00),
+('678901234567', 'Базарбаев Мереке', '+77016789012', 'merekebazarbayev@mail.kz', 'active', 30000000.00),
+('789012345678', 'Федоров Тимур', '+77017890123', 'Timurfe@mail.kz', 'frozen', 8000000.00),
+('890123456789', 'Аружан Сакенкызы', '+77018901234', 'aruzhansaken@mail.kz', 'active', 12000000.00),
+('901234567890', 'Тимурулы Нурмухамед', '+77019012345', 'nurmuhamedtimur@mail.kz', 'active', 18000000.00),
+('012345678901', 'Серикулы Диас', '+77010123456', 'serikdias2103@mail.kz', 'active', 500000000.00),
+('111222333444', 'Бауыржан Темирлан', '+77011112222', 'baur@mail.kz', 'active', 7000000.00),
+('222333444555', 'Серикказы Томирис', '+77012223333', 'tomiris@mail.kz', 'active', 9000000.00),
+('333444555666', 'Нурдаулет Ремет', '+77013334444', 'remetnurdaulet@mail.kz', 'active', 11000000.00),
+('444555666777', 'Амангельдин Курмет', '+77014445555', 'amangeldinkurmet@mail.kz', 'active', 6000000.00),
+('555666777888', 'Айша бибі ', '+77015556666', 'aishabibi@mail.kz', 'active', 13000000.00);
+
+INSERT INTO accounts (customer_id, account_number, currency, balance, is_active) VALUES
+(1, 'KZ86125KZT0000012345', 'KZT', 5000000.00, true),
+(1, 'KZ86125USD0000012346', 'USD', 10000.00, true),
+(2, 'KZ86125KZT0000023456', 'KZT', 8000000.00, true),
+(2, 'KZ86125EUR0000023457', 'EUR', 5000.00, true),
+(3, 'KZ86125KZT0000034567', 'KZT', 3000000.00, true),
+(3, 'KZ86125USD0000034568', 'USD', 2000.00, true),
+(4, 'KZ86125KZT0000045678', 'KZT', 1000000.00, true),
+(5, 'KZ86125KZT0000056789', 'KZT', 12000000.00, true),
+(5, 'KZ86125RUB0000056790', 'RUB', 500000.00, true),
+(6, 'KZ86125KZT0000067890', 'KZT', 25000000.00, true),
+(7, 'KZ86125KZT0000078901', 'KZT', 2000000.00, true),
+(8, 'KZ86125KZT0000089012', 'KZT', 6000000.00, true),
+(9, 'KZ86125KZT0000090123', 'KZT', 15000000.00, true),
+(9, 'KZ86125USD0000090124', 'USD', 8000.00, true),
+(10, 'KZ86125KZT0000001234', 'KZT', 100000000.00, true),
+(11, 'KZ86125KZT0000111222', 'KZT', 4000000.00, true),
+(12, 'KZ86125KZT0000222333', 'KZT', 5500000.00, true),
+(13, 'KZ86125KZT0000333444', 'KZT', 7200000.00, true),
+(14, 'KZ86125KZT0000444555', 'KZT', 3500000.00, true),
+(15, 'KZ86125KZT0000555666', 'KZT', 9000000.00, true);
+
+INSERT INTO exchange_rates (from_currency, to_currency, rate, valid_from, valid_to) VALUES
+('KZT', 'KZT', 1.000000, '2024-01-01', '2099-12-31'),
+('USD', 'KZT', 475.50, '2024-12-01', '2099-12-31'),
+('EUR', 'KZT', 515.80, '2024-12-01', '2099-12-31'),
+('RUB', 'KZT', 4.85, '2024-12-01', '2099-12-31'),
+('KZT', 'USD', 0.002103, '2024-12-01', '2099-12-31'),
+('KZT', 'EUR', 0.001939, '2024-12-01', '2099-12-31'),
+('KZT', 'RUB', 0.206186, '2024-12-01', '2099-12-31'),
+('USD', 'EUR', 0.920000, '2024-12-01', '2099-12-31'),
+('EUR', 'USD', 1.087000, '2024-12-01', '2099-12-31'),
+('USD', 'RUB', 98.000000, '2024-12-01', '2099-12-31'),
+('RUB', 'USD', 0.010204, '2024-12-01', '2099-12-31');
+
+INSERT INTO transactions (from_account_id, to_account_id, amount, currency, exchange_rate, amount_kzt, type, status, completed_at, description) VALUES
+(1, 3, 500000.00, 'KZT', 1.0, 500000.00, 'transfer', 'completed', '2024-12-10 10:30:00', 'Payment for services'),
+(3, 5, 200000.00, 'KZT', 1.0, 200000.00, 'transfer', 'completed', '2024-12-10 11:00:00', 'Loan repayment'),
+(6, 8, 1000000.00, 'KZT', 1.0, 1000000.00, 'transfer', 'completed', '2024-12-10 14:20:00', 'Business payment'),
+(2, 4, 1000.00, 'USD', 475.50, 475500.00, 'transfer', 'completed', '2024-12-11 09:15:00', 'Currency exchange'),
+(10, 9, 3000000.00, 'KZT', 1.0, 3000000.00, 'transfer', 'completed', '2024-12-11 10:00:00', 'Investment'),
+(8, 1, 250000.00, 'KZT', 1.0, 250000.00, 'transfer', 'completed', '2024-12-11 15:30:00', 'Refund'),
+(13, 15, 800000.00, 'KZT', 1.0, 800000.00, 'transfer', 'completed', '2024-12-11 16:45:00', 'Contract payment'),
+(5, 8, 1500000.00, 'KZT', 1.0, 1500000.00, 'transfer', 'completed', '2024-12-12 08:20:00', 'Supplier payment'),
+(9, 11, 600000.00, 'KZT', 1.0, 600000.00, 'transfer', 'completed', '2024-12-12 09:30:00', 'Monthly rent'),
+(6, 12, 2000000.00, 'KZT', 1.0, 2000000.00, 'transfer', 'completed', '2024-12-12 10:15:00', 'Equipment purchase'),
+(NULL, 1, 1000000.00, 'KZT', 1.0, 1000000.00, 'deposit', 'completed', '2024-12-12 11:00:00', 'Cash deposit'),
+(3, NULL, 150000.00, 'KZT', 1.0, 150000.00, 'withdrawal', 'completed', '2024-12-12 12:00:00', 'ATM withdrawal'),
+(15, 16, 400000.00, 'KZT', 1.0, 400000.00, 'transfer', 'completed', '2024-12-12 13:20:00', 'Personal transfer'),
+(10, 13, 5000000.00, 'KZT', 1.0, 5000000.00, 'transfer', 'completed', '2024-12-12 14:00:00', 'Salary payment'),
+(10, 14, 6000000.00, 'KZT', 1.0, 6000000.00, 'transfer', 'completed', '2024-12-12 14:05:00', 'Large transfer');
+
+CREATE OR REPLACE FUNCTION process_transfer(
+    p_from_account_number VARCHAR,
+    p_to_account_number VARCHAR,
+    p_amount NUMERIC,
+    p_currency VARCHAR,
+    p_description TEXT
+) RETURNS JSONB AS $$
+DECLARE
+    v_from_account_id INTEGER;
+    v_to_account_id INTEGER;
+    v_from_customer_id INTEGER;
+    v_from_balance NUMERIC;
+    v_from_currency VARCHAR;
+    v_to_currency VARCHAR;
+    v_customer_status VARCHAR;
+    v_exchange_rate NUMERIC;
+    v_amount_kzt NUMERIC;
+    v_daily_total NUMERIC;
+    v_daily_limit NUMERIC;
+    v_transaction_id INTEGER;
+    v_result JSONB;
+BEGIN
+    SAVEPOINT transfer_start;
+    
+    BEGIN
+        SELECT a.account_id, a.customer_id, a.balance, a.currency, c.status, c.daily_limit_kzt
+        INTO v_from_account_id, v_from_customer_id, v_from_balance, v_from_currency, v_customer_status, v_daily_limit
+        FROM accounts a
+        JOIN customers c ON a.customer_id = c.customer_id
+        WHERE a.account_number = p_from_account_number AND a.is_active = true
+        FOR UPDATE;
+        
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'ERR001: Source account not found or inactive';
+        END IF;
+        
+        SELECT a.account_id, a.currency INTO v_to_account_id, v_to_currency
+        FROM accounts a
+        WHERE a.account_number = p_to_account_number AND a.is_active = true
+        FOR UPDATE;
+        
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'ERR002: Destination account not found or inactive';
+        END IF;
+        
+        IF v_customer_status != 'active' THEN
+            RAISE EXCEPTION 'ERR003: Customer status is % - transfers not allowed', v_customer_status;
+        END IF;
+        
+        IF p_currency = 'KZT' THEN
+            v_amount_kzt := p_amount;
+            v_exchange_rate := 1.0;
+        ELSE
+            SELECT rate INTO v_exchange_rate
+            FROM exchange_rates
+            WHERE from_currency = p_currency 
+              AND to_currency = 'KZT'
+              AND CURRENT_TIMESTAMP BETWEEN valid_from AND valid_to;
+            
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'ERR004: Exchange rate not found for % to KZT', p_currency;
+            END IF;
+            
+            v_amount_kzt := p_amount * v_exchange_rate;
+        END IF;
+        
+        SELECT COALESCE(SUM(amount_kzt), 0) INTO v_daily_total
+        FROM transactions
+        WHERE from_account_id = v_from_account_id
+          AND DATE(created_at) = CURRENT_DATE
+          AND status = 'completed';
+        
+        IF v_daily_total + v_amount_kzt > v_daily_limit THEN
+            RAISE EXCEPTION 'ERR005: Daily limit exceeded. Used: %, Limit: %, Attempted: %', 
+                v_daily_total, v_daily_limit, v_amount_kzt;
+        END IF;
+        
+        DECLARE
+            v_debit_amount NUMERIC;
+            v_credit_amount NUMERIC;
+            v_rate_from_to NUMERIC;
+        BEGIN
+            IF v_from_currency != p_currency THEN
+                SELECT rate INTO v_rate_from_to
+                FROM exchange_rates
+                WHERE from_currency = p_currency AND to_currency = v_from_currency
+                  AND CURRENT_TIMESTAMP BETWEEN valid_from AND valid_to;
+                v_debit_amount := p_amount * v_rate_from_to;
+            ELSE
+                v_debit_amount := p_amount;
+            END IF;
+            
+            IF v_from_balance < v_debit_amount THEN
+                RAISE EXCEPTION 'ERR006: Insufficient balance. Available: %, Required: %', 
+                    v_from_balance, v_debit_amount;
+            END IF;
+            
+            IF v_to_currency != p_currency THEN
+                SELECT rate INTO v_rate_from_to
+                FROM exchange_rates
+                WHERE from_currency = p_currency AND to_currency = v_to_currency
+                  AND CURRENT_TIMESTAMP BETWEEN valid_from AND valid_to;
+                v_credit_amount := p_amount * v_rate_from_to;
+            ELSE
+                v_credit_amount := p_amount;
+            END IF;
+            
+            INSERT INTO transactions (
+                from_account_id, to_account_id, amount, currency, 
+                exchange_rate, amount_kzt, type, status, description
+            ) VALUES (
+                v_from_account_id, v_to_account_id, p_amount, p_currency,
+                v_exchange_rate, v_amount_kzt, 'transfer', 'pending', p_description
+            ) RETURNING transaction_id INTO v_transaction_id;
+            
+            UPDATE accounts SET balance = balance - v_debit_amount 
+            WHERE account_id = v_from_account_id;
+            
+            UPDATE accounts SET balance = balance + v_credit_amount 
+            WHERE account_id = v_to_account_id;
+            
+            UPDATE transactions 
+            SET status = 'completed', completed_at = CURRENT_TIMESTAMP
+            WHERE transaction_id = v_transaction_id;
+            
+            INSERT INTO audit_log (table_name, record_id, action, new_values, ip_address)
+            VALUES ('transactions', v_transaction_id, 'INSERT', 
+                    jsonb_build_object('transaction_id', v_transaction_id, 'status', 'completed'),
+                    '127.0.0.1'::INET);
+            
+            v_result := jsonb_build_object(
+                'success', true,
+                'transaction_id', v_transaction_id,
+                'message', 'Transfer completed successfully',
+                'amount_kzt', v_amount_kzt,
+                'from_account', p_from_account_number,
+                'to_account', p_to_account_number
+            );
+            
+            RETURN v_result;
+        END;
+        
+    EXCEPTION
+        WHEN OTHERS THEN
+            ROLLBACK TO SAVEPOINT transfer_start;
+            
+            INSERT INTO audit_log (table_name, record_id, action, new_values, ip_address)
+            VALUES ('transactions', 0, 'INSERT', 
+                    jsonb_build_object('error', SQLERRM, 'from', p_from_account_number),
+                    '127.0.0.1'::INET);
+            
+            INSERT INTO transactions (
+                from_account_id, to_account_id, amount, currency,
+                amount_kzt, type, status, description
+            ) VALUES (
+                v_from_account_id, v_to_account_id, p_amount, p_currency,
+                v_amount_kzt, 'transfer', 'failed', p_description || ' - ' || SQLERRM
+            );
+            
+            v_result := jsonb_build_object(
+                'success', false,
+                'error_code', SQLSTATE,
+                'error_message', SQLERRM,
+                'from_account', p_from_account_number,
+                'to_account', p_to_account_number
+            );
+            
+            RETURN v_result;
+    END;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE VIEW customer_balance_summary AS
+WITH customer_balances AS (
+    SELECT 
+        c.customer_id,
+        c.full_name,
+        c.iin,
+        c.status,
+        c.daily_limit_kzt,
+        a.account_id,
+        a.account_number,
+        a.currency,
+        a.balance,
+        COALESCE(er.rate, 1.0) as rate_to_kzt,
+        a.balance * COALESCE(er.rate, 1.0) as balance_kzt
+    FROM customers c
+    LEFT JOIN accounts a ON c.customer_id = a.customer_id AND a.is_active = true
+    LEFT JOIN exchange_rates er ON a.currency = er.from_currency 
+        AND er.to_currency = 'KZT'
+        AND CURRENT_TIMESTAMP BETWEEN er.valid_from AND er.valid_to
+),
+daily_usage AS (
+    SELECT 
+        a.customer_id,
+        COALESCE(SUM(t.amount_kzt), 0) as today_spent
+    FROM accounts a
+    LEFT JOIN transactions t ON a.account_id = t.from_account_id
+        AND DATE(t.created_at) = CURRENT_DATE
+        AND t.status = 'completed'
+    GROUP BY a.customer_id
+)
+SELECT 
+    cb.customer_id,
+    cb.full_name,
+    cb.iin,
+    cb.status,
+    cb.account_number,
+    cb.currency,
+    cb.balance,
+    cb.balance_kzt,
+    SUM(cb.balance_kzt) OVER (PARTITION BY cb.customer_id) as total_balance_kzt,
+    cb.daily_limit_kzt,
+    du.today_spent,
+    ROUND((du.today_spent / NULLIF(cb.daily_limit_kzt, 0) * 100), 2) as limit_utilization_pct,
+    ROW_NUMBER() OVER (ORDER BY SUM(cb.balance_kzt) OVER (PARTITION BY cb.customer_id) DESC) as balance_rank
+FROM customer_balances cb
+LEFT JOIN daily_usage du ON cb.customer_id = du.customer_id
+ORDER BY total_balance_kzt DESC, cb.customer_id, cb.account_id;
+
+CREATE OR REPLACE VIEW daily_transaction_report AS
+WITH daily_stats AS (
+    SELECT 
+        DATE(created_at) as transaction_date,
+        type,
+        status,
+        COUNT(*) as transaction_count,
+        SUM(amount_kzt) as total_volume_kzt,
+        AVG(amount_kzt) as avg_amount_kzt,
+        MIN(amount_kzt) as min_amount_kzt,
+        MAX(amount_kzt) as max_amount_kzt
+    FROM transactions
+    WHERE status = 'completed'
+    GROUP BY DATE(created_at), type, status
+)
+SELECT 
+    transaction_date,
+    type,
+    transaction_count,
+    total_volume_kzt,
+    avg_amount_kzt,
+    min_amount_kzt,
+    max_amount_kzt,
+    SUM(total_volume_kzt) OVER (
+        PARTITION BY type 
+        ORDER BY transaction_date 
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ) as running_total_kzt,
+    LAG(total_volume_kzt) OVER (
+        PARTITION BY type 
+        ORDER BY transaction_date
+    ) as prev_day_volume,
+    ROUND(
+        (total_volume_kzt - LAG(total_volume_kzt) OVER (PARTITION BY type ORDER BY transaction_date)) 
+        / NULLIF(LAG(total_volume_kzt) OVER (PARTITION BY type ORDER BY transaction_date), 0) * 100, 
+        2
+    ) as day_over_day_growth_pct
+FROM daily_stats
+ORDER BY transaction_date DESC, type;
+
+CREATE OR REPLACE VIEW suspicious_activity_view 
+WITH (security_barrier = true) AS
+WITH large_transactions AS (
+    SELECT 
+        t.transaction_id,
+        t.from_account_id,
+        t.to_account_id,
+        t.amount_kzt,
+        t.created_at,
+        c.customer_id,
+        c.full_name,
+        'LARGE_TRANSACTION' as flag_type,
+        'Transaction exceeds 5M KZT threshold' as flag_reason
+    FROM transactions t
+    JOIN accounts a ON t.from_account_id = a.account_id
+    JOIN customers c ON a.customer_id = c.customer_id
+    WHERE t.amount_kzt > 5000000 
+      AND t.status = 'completed'
+),
+high_frequency AS (
+    SELECT 
+        t.transaction_id,
+        t.from_account_id,
+        t.to_account_id,
+        t.amount_kzt,
+        t.created_at,
+        c.customer_id,
+        c.full_name,
+        'HIGH_FREQUENCY' as flag_type,
+        'More than 10 transactions in one hour' as flag_reason
+    FROM transactions t
+    JOIN accounts a ON t.from_account_id = a.account_id
+    JOIN customers c ON a.customer_id = c.customer_id
+    WHERE t.status = 'completed'
+      AND EXISTS (
+          SELECT 1
+          FROM transactions t2
+          WHERE t2.from_account_id = t.from_account_id
+            AND t2.status = 'completed'
+            AND t2.created_at BETWEEN t.created_at - INTERVAL '1 hour' AND t.created_at
+          GROUP BY t2.from_account_id
+          HAVING COUNT(*) > 10
+      )
+),
+rapid_sequential AS (
+    SELECT 
+        t1.transaction_id,
+        t1.from_account_id,
+        t1.to_account_id,
+        t1.amount_kzt,
+        t1.created_at,
+        c.customer_id,
+        c.full_name,
+        'RAPID_SEQUENTIAL' as flag_type,
+        'Sequential transfers less than 1 minute apart' as flag_reason
+    FROM transactions t1
+    JOIN transactions t2 ON t1.from_account_id = t2.from_account_id
+        AND t1.transaction_id != t2.transaction_id
+        AND t2.created_at < t1.created_at
+        AND t1.created_at - t2.created_at < INTERVAL '1 minute'
+    JOIN accounts a ON t1.from_account_id = a.account_id
+    JOIN customers c ON a.customer_id = c.customer_id
+    WHERE t1.status = 'completed'
+)
+SELECT * FROM large_transactions
+UNION ALL
+SELECT * FROM high_frequency
+UNION ALL
+SELECT * FROM rapid_sequential
+ORDER BY created_at DESC;
+
+CREATE INDEX idx_transactions_account_date_status 
+ON transactions(from_account_id, created_at, status)
+WHERE status = 'completed';
+
+CREATE INDEX idx_accounts_account_number_hash 
+ON accounts USING HASH(account_number);
+
+CREATE INDEX idx_audit_log_new_values_gin 
+ON audit_log USING GIN(new_values);
+
+CREATE INDEX idx_audit_log_old_values_gin 
+ON audit_log USING GIN(old_values);
+
+CREATE INDEX idx_accounts_active_customer 
+ON accounts(customer_id, currency, balance)
+WHERE is_active = true;
+
+CREATE INDEX idx_customers_email_lower 
+ON customers(LOWER(email));
+
+CREATE INDEX idx_transactions_covering 
+ON transactions(from_account_id, created_at, status, amount_kzt, type)
+INCLUDE (to_account_id, description);
+
+CREATE OR REPLACE FUNCTION process_salary_batch(
+    p_company_account_number VARCHAR,
+    p_payments JSONB
+) RETURNS JSONB AS $$
+DECLARE
+    v_company_account_id INTEGER;
+    v_company_balance NUMERIC;
+    v_company_currency VARCHAR;
+    v_total_amount_kzt NUMERIC := 0;
+    v_payment JSONB;
+    v_employee_account_id INTEGER;
+    v_employee_iin VARCHAR;
+    v_amount NUMERIC;
+    v_description TEXT;
+    v_successful_count INTEGER := 0;
+    v_failed_count INTEGER := 0;
+    v_failed_details JSONB := '[]'::JSONB;
+    v_exchange_rate NUMERIC;
+    v_lock_key BIGINT;
+    v_result JSONB;
+BEGIN
+    v_lock_key := hashtext(p_company_account_number)::BIGINT;
+    
+    IF NOT pg_try_advisory_lock(v_lock_key) THEN
+        RETURN jsonb_build_object(
+            'success', false,
+            'error', 'Another batch is being processed for this company account'
+        );
+    END IF;
+    
+    BEGIN
+        SELECT account_id, balance, currency
+        INTO v_company_account_id, v_company_balance, v_company_currency
+        FROM accounts
+        WHERE account_number = p_company_account_number AND is_active = true
+        FOR UPDATE;
+        
+        IF NOT FOUND THEN
+            PERFORM pg_advisory_unlock(v_lock_key);
+            RETURN jsonb_build_object(
+                'success', false,
+                'error', 'Company account not found or inactive'
+            );
+        END IF;
+        
+        FOR v_payment IN SELECT * FROM jsonb_array_elements(p_payments)
+        LOOP
+            v_amount := (v_payment->>'amount')::NUMERIC;
+            
+            IF v_company_currency = 'KZT' THEN
+                v_total_amount_kzt := v_total_amount_kzt + v_amount;
+            ELSE
+                SELECT rate INTO v_exchange_rate
+                FROM exchange_rates
+                WHERE from_currency = v_company_currency AND to_currency = 'KZT'
+                  AND CURRENT_TIMESTAMP BETWEEN valid_from AND valid_to;
+                v_total_amount_kzt := v_total_amount_kzt + (v_amount / v_exchange_rate);
+            END IF;
+        END LOOP;
+        
+        IF v_company_balance < v_total_amount_kzt THEN
+            PERFORM pg_advisory_unlock(v_lock_key);
+            RETURN jsonb_build_object(
+                'success', false,
+                'error', 'Insufficient balance for batch',
+                'required', v_total_amount_kzt,
+                'available', v_company_balance
+            );
+        END IF;
+        
+        FOR v_payment IN SELECT * FROM jsonb_array_elements(p_payments)
+        LOOP
+            SAVEPOINT individual_payment;
+            
+            BEGIN
+                v_employee_iin := v_payment->>'iin';
+                v_amount := (v_payment->>'amount')::NUMERIC;
+                v_description := COALESCE(v_payment->>'description', 'Salary payment');
+                
+                SELECT a.account_id INTO v_employee_account_id
+                FROM accounts a
+                JOIN customers
